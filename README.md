@@ -14,7 +14,8 @@ Snap a receipt on your phone. Claude reads it, picks the expense category and fi
 **Easiest:** copy the template project and follow the 8-step guide (~15 min).
 
 - Template: https://script.google.com/d/1hf1dI-1wOgyn62lJAdAAw_Tce9xCXjIVo4SPXG7Cabvhwy-LCJDxUlgM/edit?usp=sharing
-- Setup guide: GUIDE_LINK
+- Setup guide: https://claude.ai/artifact/67Cz12983AWvSmMpnhtAYs
+- Case study and live demo: https://nicolasruiz.net/projects/receipts-autopilot.html
 
 **From this repo:** create a project at [script.google.com](https://script.google.com), paste `Code.gs`, add an HTML file named exactly `Index` with `Index.html`, then follow the guide from step 2.
 

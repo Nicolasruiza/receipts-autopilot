@@ -37,10 +37,7 @@ iPhone (Take photo / Import)
 
 ## Fix a receipt in `_Review`
 
-In the log spreadsheet, on that receipt's row:
-
-- **FIX:** type the correct `Receipt date` (YYYY-MM-DD), `Category` or `Merchant`, then set `Status` to `FIX`. The next run files it with your values.
-- **REDO:** set `Status` to `REDO` to send the photo back to the AI.
+In the log spreadsheet, on that receipt's row, type the correct `Receipt date` (YYYY-MM-DD), `Category` or `Merchant`, then set `Status` to `FIX`. The next run files it with your values.
 
 Run `processInbox` from the editor to apply it right away.
 

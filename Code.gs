@@ -146,8 +146,8 @@ function processInbox() {
     const inbox  = DriveApp.getFolderById(props.getProperty('INBOX_ID'));
     const sheet  = SpreadsheetApp.openById(props.getProperty('SHEET_ID')).getSheets()[0];
 
-    // 1) Corrections typed in the log (Status = FIX or REDO). No AI call needed for FIX.
-    applyFixes_(sheet, root, review, inbox);
+    // 1) Corrections typed in the log (Status = FIX). No AI call needed.
+    applyFixes_(sheet, root, review);
 
     // 2) New photos in the inbox.
     const files = inbox.getFiles();
@@ -194,13 +194,11 @@ function fileReceipt_(file, r, ok, root, review) {
 
 /*
  * FIXING A RECEIPT FROM THE LOG
- * In the "Log" sheet, on the receipt's row:
- *   - FIX:  correct Receipt date (YYYY-MM-DD), Merchant, Category or Total, then type FIX
- *           in Status. The next run files it with your values (no AI call).
- *   - REDO: type REDO in Status to send the photo back to the AI (e.g. after rotating it).
+ * In the "Log" sheet, on the receipt's row: correct Receipt date (YYYY-MM-DD), Merchant or
+ * Category, then type FIX in Status. The next run files it with your values (no AI call).
  * Run "processInbox" from the editor to apply right away instead of waiting for the hour.
  */
-function applyFixes_(sheet, root, review, inbox) {
+function applyFixes_(sheet, root, review) {
   const last = sheet.getLastRow();
   if (last < 2) return;
   const range = sheet.getRange(2, 1, last - 1, 10);
@@ -209,19 +207,13 @@ function applyFixes_(sheet, root, review, inbox) {
 
   rows.forEach((row, i) => {
     const status = String(row[7]).trim().toUpperCase();
-    if (status !== 'FIX' && status !== 'REDO') return;
+    if (status !== 'FIX') return;
     const rowNum = i + 2;
     const id = String(row[9]).match(/[-\w]{25,}/);
     if (!id) { sheet.getRange(rowNum, 8).setValue('REVIEW (file link missing)'); return; }
     let file;
     try { file = DriveApp.getFileById(id[0]); }
     catch (e) { sheet.getRange(rowNum, 8).setValue('REVIEW (file not found)'); return; }
-
-    if (status === 'REDO') {
-      file.moveTo(inbox);
-      sheet.getRange(rowNum, 8).setValue('REDONE (see new row)');
-      return;
-    }
 
     // Sheets turns typed dates into Date objects; accept both that and plain text.
     const isDate = Object.prototype.toString.call(row[1]) === '[object Date]' && !isNaN(row[1]);

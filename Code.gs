@@ -141,42 +141,28 @@ function processInbox() {
     const apiKey = props.getProperty('ANTHROPIC_API_KEY');
     if (!apiKey) throw new Error('Missing ANTHROPIC_API_KEY in Script Properties');
 
-    const files = DriveApp.getFolderById(props.getProperty('INBOX_ID')).getFiles();
-    if (!files.hasNext()) return; // empty inbox → nothing to do
-
     const root   = DriveApp.getFolderById(props.getProperty('ROOT_ID'));
     const review = DriveApp.getFolderById(props.getProperty('REVIEW_ID'));
+    const inbox  = DriveApp.getFolderById(props.getProperty('INBOX_ID'));
     const sheet  = SpreadsheetApp.openById(props.getProperty('SHEET_ID')).getSheets()[0];
 
+    // 1) Corrections typed in the log (Status = FIX or REDO). No AI call needed for FIX.
+    applyFixes_(sheet, root, review, inbox);
+
+    // 2) New photos in the inbox.
+    const files = inbox.getFiles();
     while (files.hasNext() && Date.now() - start < CONFIG.MAX_RUN_MS) {
       const file = files.next();
       try {
         const r = extract_(file, apiKey);
-        const validDate = r.date && /^\d{4}-\d{2}-\d{2}$/.test(r.date);
-        const ok = validDate && CATEGORIES[r.category] && Number(r.confidence) >= CONFIG.MIN_CONFIDENCE;
-        const merchant = slug_(r.merchant || 'unknown');
-
-        let dest, base;
-        if (ok) {
-          const [y, m] = r.date.split('-');
-          const yF = getOrCreateFolder_(root, y);
-          dest = getOrCreateFolder_(yF, m + '-' + MONTHS[Number(m) - 1]);
-          base = r.date + '_' + r.category + '_' + merchant;
-        } else {
-          dest = review;
-          base = (validDate ? r.date : 'no-date') + '_' +
-                 (CATEGORIES[r.category] ? r.category : 'no-category') + '_' + merchant;
-        }
-
-        const newName = uniqueName_(dest, base, ext_(file));
-        file.setName(newName);
-        file.moveTo(dest);
-
+        const ok = isValidDate_(r.date) && CATEGORIES[r.category] && Number(r.confidence) >= CONFIG.MIN_CONFIDENCE;
+        const newName = fileReceipt_(file, r, ok, root, review);
+        const status = ok ? 'OK' + (r.note ? ' (' + r.note + ')' : '')
+                          : 'REVIEW' + (r.note ? ' (' + r.note + ')' : '');
         sheet.appendRow([new Date(), r.date || '', r.merchant || '', r.category || '',
                          r.total == null ? '' : r.total, r.currency || '',
                          r.confidence == null ? '' : r.confidence,
-                         ok ? 'OK' : 'REVIEW' + (r.note ? ' (' + r.note + ')' : ''),
-                         newName, file.getUrl()]);
+                         status, newName, file.getUrl()]);
       } catch (err) {
         // Stays in the inbox and is retried on the next run
         console.error(file.getName() + ': ' + err);
@@ -185,6 +171,79 @@ function processInbox() {
   } finally {
     lock.releaseLock();
   }
+}
+
+// Renames and moves a receipt. ok=true → Year/MM-Month, otherwise → _Review.
+function fileReceipt_(file, r, ok, root, review) {
+  const merchant = slug_(r.merchant || 'unknown');
+  let dest, base;
+  if (ok) {
+    const [y, m] = r.date.split('-');
+    dest = getOrCreateFolder_(getOrCreateFolder_(root, y), m + '-' + MONTHS[Number(m) - 1]);
+    base = r.date + '_' + r.category + '_' + merchant;
+  } else {
+    dest = review;
+    base = (isValidDate_(r.date) ? r.date : 'no-date') + '_' +
+           (CATEGORIES[r.category] ? r.category : 'no-category') + '_' + merchant;
+  }
+  const newName = uniqueName_(dest, base, ext_(file));
+  file.setName(newName);
+  file.moveTo(dest);
+  return newName;
+}
+
+/*
+ * FIXING A RECEIPT FROM THE LOG
+ * In the "Log" sheet, on the receipt's row:
+ *   - FIX:  correct Receipt date (YYYY-MM-DD), Merchant, Category or Total, then type FIX
+ *           in Status. The next run files it with your values (no AI call).
+ *   - REDO: type REDO in Status to send the photo back to the AI (e.g. after rotating it).
+ * Run "processInbox" from the editor to apply right away instead of waiting for the hour.
+ */
+function applyFixes_(sheet, root, review, inbox) {
+  const last = sheet.getLastRow();
+  if (last < 2) return;
+  const range = sheet.getRange(2, 1, last - 1, 10);
+  const rows = range.getValues();
+  const tz = Session.getScriptTimeZone();
+
+  rows.forEach((row, i) => {
+    const status = String(row[7]).trim().toUpperCase();
+    if (status !== 'FIX' && status !== 'REDO') return;
+    const rowNum = i + 2;
+    const id = String(row[9]).match(/[-\w]{25,}/);
+    if (!id) { sheet.getRange(rowNum, 8).setValue('REVIEW (file link missing)'); return; }
+    let file;
+    try { file = DriveApp.getFileById(id[0]); }
+    catch (e) { sheet.getRange(rowNum, 8).setValue('REVIEW (file not found)'); return; }
+
+    if (status === 'REDO') {
+      file.moveTo(inbox);
+      sheet.getRange(rowNum, 8).setValue('REDONE (see new row)');
+      return;
+    }
+
+    // Sheets turns typed dates into Date objects; accept both that and plain text.
+    const isDate = Object.prototype.toString.call(row[1]) === '[object Date]' && !isNaN(row[1]);
+    const date = isDate ? Utilities.formatDate(row[1], tz, 'yyyy-MM-dd') : String(row[1]).trim();
+    const r = { date: date, merchant: String(row[2]).trim(), category: String(row[3]).trim().toLowerCase() };
+    const problems = [];
+    if (!isValidDate_(r.date)) problems.push('date must be YYYY-MM-DD');
+    if (!CATEGORIES[r.category]) problems.push('category must be one of: ' + Object.keys(CATEGORIES).join(', '));
+    if (problems.length) {
+      sheet.getRange(rowNum, 8).setValue('REVIEW (' + problems.join('; ') + ')');
+      return;
+    }
+    const newName = fileReceipt_(file, r, true, root, review);
+    sheet.getRange(rowNum, 2).setNumberFormat('@').setValue(r.date);
+    sheet.getRange(rowNum, 4).setValue(r.category);
+    sheet.getRange(rowNum, 8).setValue('OK (fixed)');
+    sheet.getRange(rowNum, 9).setValue(newName);
+  });
+}
+
+function isValidDate_(s) {
+  return typeof s === 'string' && /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(s);
 }
 
 function extract_(file, apiKey) {
@@ -203,11 +262,16 @@ function extract_(file, apiKey) {
     'You are a bookkeeping assistant for ' + MY_CONFIG.COMPANY + ', a small business in ' + MY_CONFIG.LOCATION + '.\n' +
     'Read this receipt/invoice and return ONLY a JSON object, no other text:\n' +
     '{"date":"YYYY-MM-DD","merchant":"short merchant name","category":"<key>","total":number,' +
-    '"currency":"3-letter ISO code","confidence":0.0-1.0}\n\n' +
+    '"currency":"3-letter ISO code","confidence":0.0-1.0,"note":"short note or null"}\n\n' +
     'Rules:\n' +
-    '- date = the transaction date printed on the receipt (NOT today). Use null if unreadable.\n' +
+    '- The photo may show SEVERAL slips of the SAME purchase (e.g. the itemized bill plus the card ' +
+    'payment slip where a tip was added). Treat them as ONE receipt. In that case total = the final amount ' +
+    'actually charged (the card slip including tip, normally the higher amount) and note = "bill + card slip with tip".\n' +
+    '- If the slips are clearly DIFFERENT purchases (different merchants or dates), set confidence < 0.6 ' +
+    'and note = "multiple receipts in one photo".\n' +
+    '- date = the transaction date printed on the receipt (NOT today). Use null if unreadable and note = "date unreadable".\n' +
     '- Choose the category from the MERCHANT type, using exactly one of these keys:\n' + catList + '\n' +
-    '- total = final amount paid including tax. null if unreadable.\n' +
+    '- total = final amount paid including tax and tip. null if unreadable.\n' +
     '- confidence = how sure you are about date AND category together. ' +
     'Use < 0.6 if the image is blurry, not a receipt, or the merchant type is ambiguous.';
 

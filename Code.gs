@@ -61,6 +61,7 @@ function setup() {
     const ss = SpreadsheetApp.create(CONFIG.ROOT_NAME + ' - Log');
     ss.getSheets()[0].appendRow(['Processed', 'Receipt date', 'Merchant', 'Category',
                                  'Total', 'Currency', 'Confidence', 'Status', 'File', 'Link']);
+    ensureInstructions_(ss.getSheets()[0]);
     DriveApp.getFileById(ss.getId()).moveTo(root);
     sheetId = ss.getId();
   }
@@ -147,6 +148,7 @@ function processInbox() {
     const sheet  = SpreadsheetApp.openById(props.getProperty('SHEET_ID')).getSheets()[0];
 
     // 1) Corrections typed in the log (Status = FIX). No AI call needed.
+    ensureInstructions_(sheet);
     applyFixes_(sheet, root, review);
 
     // 2) New photos in the inbox.
@@ -199,16 +201,16 @@ function fileReceipt_(file, r, ok, root, review) {
  * Run "processInbox" from the editor to apply right away instead of waiting for the hour.
  */
 function applyFixes_(sheet, root, review) {
+  const first = headerRow_(sheet) + 1;
   const last = sheet.getLastRow();
-  if (last < 2) return;
-  const range = sheet.getRange(2, 1, last - 1, 10);
-  const rows = range.getValues();
+  if (last < first) return;
+  const rows = sheet.getRange(first, 1, last - first + 1, 10).getValues();
   const tz = Session.getScriptTimeZone();
 
   rows.forEach((row, i) => {
     const status = String(row[7]).trim().toUpperCase();
     if (status !== 'FIX') return;
-    const rowNum = i + 2;
+    const rowNum = i + first;
     const id = String(row[9]).match(/[-\w]{25,}/);
     if (!id) { sheet.getRange(rowNum, 8).setValue('REVIEW (file link missing)'); return; }
     let file;
@@ -232,6 +234,27 @@ function applyFixes_(sheet, root, review) {
     sheet.getRange(rowNum, 8).setValue('OK (fixed)');
     sheet.getRange(rowNum, 9).setValue(newName);
   });
+}
+
+const INSTRUCTIONS = '✏️ To fix a receipt: if anything is wrong (or Status says REVIEW), correct its ' +
+  'Receipt date (YYYY-MM-DD), Merchant or Category in that row, then type FIX in Status. ' +
+  'It is re-filed with your values within the hour.';
+
+// Adds the instruction banner above the header once (idempotent).
+function ensureInstructions_(sheet) {
+  if (String(sheet.getRange(1, 1).getValue()).indexOf('✏️ To fix') === 0) return;
+  sheet.insertRowBefore(1);
+  const banner = sheet.getRange(1, 1, 1, 10);
+  banner.merge();
+  banner.setValue(INSTRUCTIONS).setWrap(true).setVerticalAlignment('middle')
+        .setBackground('#fff4cc').setFontWeight('bold').setFontColor('#5c4200');
+  sheet.setRowHeight(1, 52);
+  sheet.setFrozenRows(2);
+}
+
+// Row number of the "Processed / Receipt date / …" header (1 or 2).
+function headerRow_(sheet) {
+  return String(sheet.getRange(1, 8).getValue()) === 'Status' ? 1 : 2;
 }
 
 function isValidDate_(s) {

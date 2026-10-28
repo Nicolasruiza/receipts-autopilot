@@ -7,6 +7,7 @@ Snap a receipt on your phone. Claude reads it, picks the expense category and fi
 - **Organized Drive:** `Receipts/2026/10-October/2026-10-25_meals_starbucks.jpg`, filed by the date printed on the receipt.
 - **Expense log:** one Google Sheets row per receipt.
 - **Review queue:** blurry or unclear receipts go to `_Review` instead of being guessed.
+- **Bill + tip slip:** photograph the itemized bill and the card slip together; it is logged as one receipt at the amount actually charged.
 - **No servers:** runs on Google Apps Script in your own account. You only pay a few cents per receipt to the Claude API.
 
 ## Use it
@@ -33,6 +34,15 @@ iPhone (Take photo / Import)
   → Drive /Year/MM-Month/  (or /_Review if confidence < 0.6)
   → Google Sheets log
 ```
+
+## Fix a receipt in `_Review`
+
+In the log spreadsheet, on that receipt's row:
+
+- **FIX:** type the correct `Receipt date` (YYYY-MM-DD), `Category` or `Merchant`, then set `Status` to `FIX`. The next run files it with your values.
+- **REDO:** set `Status` to `REDO` to send the photo back to the AI.
+
+Run `processInbox` from the editor to apply it right away.
 
 ## Customize
 
